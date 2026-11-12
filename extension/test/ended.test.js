@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { cfg } from './fixture.js';
-import { ENDED_DAYS, diff, readNotice, settleEnded } from '../lib.js';
+import { ENDED_DAYS, badgeLinks, diff, readNotice, settleEnded } from '../lib.js';
 
 const row = (n, extra = {}) => ({ key: `acme/widgets#${n}`, repo: 'acme/widgets', number: n, title: `PR ${n}`, url: `https://github.com/acme/widgets/pull/${n}`, allLabels: [], checks: [], extracted: {}, attention: ['QA failed'], staleReports: { QA: 'abc' }, ...extra });
 const DAY = 86_400_000;
@@ -41,4 +41,18 @@ test('a notification reads as its PR, its lines and the worst tone', () => {
   assert.equal(plain.pr, null);
   assert.equal(plain.title, 'PR Radar test notification');
   assert.equal(plain.tone, '');
+});
+
+test('badge links are the links of extractors marked badge, flagged when stale', () => {
+  const config = { ...cfg, repos: { 'acme/widgets': { ...cfg.repos['acme/widgets'], extractors: [
+    { name: 'Preview', source: 'body', regex: '(https://\\S+)', kind: 'link', badge: true },
+    { name: 'Docs', source: 'body', regex: '(https://\\S+)', kind: 'link' },
+    { name: 'Verdict', source: 'body', regex: 'x', kind: 'text', badge: true },
+  ] } } };
+  const r = row(1, { extracted: { Preview: ['https://a.example.com', 'https://b.example.com', 'https://c.example.com'], Docs: ['https://docs.example.com'], Verdict: ['ok'] }, staleReports: { Preview: 'abc' } });
+  assert.deepEqual(badgeLinks(r, config), [
+    { name: 'Preview', url: 'https://a.example.com', stale: true },
+    { name: 'Preview', url: 'https://b.example.com', stale: true },
+  ]);
+  assert.deepEqual(badgeLinks(row(2, { extracted: {} }), config), []);
 });

@@ -1,10 +1,11 @@
 // A small badge pinned to two kinds of page, each pointing at the other:
 // - a Claude Code session (any claude.ai URL with a session_ ID): the PR(s)
-//   that link the session and their check states (or Merged / Closed, for
+//   that link the session, their check states and badge links (chips to its
+//   preview, say) (or Merged / Closed, for
 //   14 days after one leaves your list that way), or, muted, why there are
 //   none;
-// - a GitHub PR: the Claude session(s) the PR links, and whether it was
-//   merged or closed, shown only when it links one;
+// - a GitHub PR: the Claude session(s) the PR links, whether it was merged
+//   or closed, and its badge links, shown only when it has any of these;
 // - a page a tracked PR links to, such as its preview deployment, on a site
 //   listed in settings' badge pages (background.js registers this script
 //   there): both, the PR and its sessions, shown only for a tracked PR.
@@ -43,6 +44,9 @@
     .session { font-weight: 700; }
     .sep { color: #6e7681; }
     .stale { color: #e5a23b; font-weight: 600; white-space: nowrap; }
+    .chip { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(201, 209, 217, 0.35); color: #e6edf3; font-weight: 600; font-size: 11.5px; white-space: nowrap; }
+    .chip:hover { background: rgba(201, 209, 217, 0.16); border-color: rgba(201, 209, 217, 0.6); }
+    .chip .arrow { color: #8b949e; font-weight: 500; }
     .state { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; }
     .state.merged { background: #8957e5; }
     .state.closed { background: #b62324; }
@@ -139,10 +143,33 @@
       checks.append(item);
     }
     a.append(checks);
-    const stale = Object.keys(r.staleReports || {});
+    // A stale link shown as a chip says so on the chip instead.
+    const linkChips = chips(r.links);
+    const stale = Object.keys(r.staleReports || {}).filter((n) => !linkChips.some((c) => c.dataset.name === n));
     if (stale.length) a.append(staleNote(stale));
-    row.append(a);
+    row.append(a, ...linkChips);
     return row;
+  }
+
+  // A PR's badge links (its preview, say) as chips; not one for this page.
+  function chips(links = []) {
+    return links
+      .filter((l) => {
+        try {
+          return new URL(l.url).origin !== location.origin;
+        } catch {
+          return false;
+        }
+      })
+      .map((l) => {
+        const a = el('a', 'chip');
+        a.href = l.url;
+        a.dataset.name = l.name;
+        a.draggable = false;
+        a.title = `Open ${l.url}${l.stale ? `\n${l.name} was made for an older commit than the PR's latest push.` : ''}`;
+        a.append(el('span', '', l.name), ...(l.stale ? [el('span', 'stale', 'stale')] : []), el('span', 'arrow', '↗'));
+        return a;
+      });
   }
 
   // Reports shown for an older commit than the PR's latest push.
@@ -175,12 +202,15 @@
   const shortId = (url) => url.match(/session_([A-Za-z0-9]{1,6})/)?.[1] || '';
 
   // GitHub: links to the PR's Claude sessions.
-  function sessionBadge(sessions, stale, state) {
+  function sessionBadge(sessions, staleNames, state, links = []) {
+    const linkChips = chips(links);
+    const stale = staleNames.filter((n) => !linkChips.some((c) => c.dataset.name === n));
     const row = el('div', 'badge');
     row.append(el('span', 'grip', '⋮⋮'));
     if (STATE[state]) row.append(stateTag(state));
     if (!sessions.length) {
-      row.append(staleNote(stale));
+      row.append(...linkChips);
+      if (stale.length) row.append(staleNote(stale));
       return row;
     }
     row.append(el('span', 'claude'), el('span', 'label', sessions.length === 1 ? 'Claude session' : 'Claude sessions'));
@@ -194,6 +224,7 @@
       row.append(a);
     });
     if (stale.length) row.append(el('span', 'sep', '·'), staleNote(stale));
+    if (linkChips.length) row.append(el('span', 'sep', '·'), ...linkChips);
     return row;
   }
 
@@ -207,7 +238,8 @@
       // were made for an older commit than its latest push.
       const sessions = res?.sessions || [];
       const stale = res?.stale || [];
-      return sessions.length || stale.length ? [sessionBadge(sessions, stale, res?.state)] : null;
+      const links = res?.links || [];
+      return sessions.length || stale.length || links.length ? [sessionBadge(sessions, stale, res?.state, links)] : null;
     }
     if (!onClaude) {
       // A page a tracked PR links to (its preview): the PR, then its sessions.

@@ -25,7 +25,8 @@ export const PROFILE_KEYS = ['labels', 'checks', 'extractors', 'actions'];
 //            group 1 if present, else the whole match; report: qa |
 //            playwright parses the newest matching text into a report block
 //            instead; commit: a regex whose group 1 is the commit the value
-//            was made for, so an older one shows as stale. Raw PR text is
+//            was made for, so an older one shows as stale; badge: a link
+//            extractor's links also show as chips on the PR's badges. Raw PR text is
 //            never stored, only what these extract, so keep them off secrets.
 //   actions: {title, type, label, when}. type: addLabel | removeLabel |
 //            toggleLabel | markReady | convertToDraft | close; when: draft |
@@ -716,6 +717,14 @@ export function sessionLinksIn(texts) {
 
 // The session links a polled PR carries, from whichever extractors found them.
 export const rowSessions = (row) => sessionLinksIn(Object.values(row.extracted || {}).flat());
+
+// The links a PR's badges carry as chips: what its link extractors marked
+// `badge` pulled out (a preview deployment, say), at most two per extractor.
+export function badgeLinks(row, config) {
+  return profileFor(config, row.repo)
+    .extractors.filter((e) => e.badge && e.kind === 'link')
+    .flatMap((e) => (row.extracted?.[e.name] || []).slice(0, 2).map((url) => ({ name: e.name, url, stale: !!row.staleReports?.[e.name] })));
+}
 
 export function validateConfig(cfg) {
   const errors = [];

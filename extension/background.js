@@ -1,6 +1,6 @@
 import { pullShared, shareLocalChanges } from './shared.js';
 import { DRAFT_MUTATIONS, actionsContexts, emptyActionsCache, gh, graphql, prStates, prTexts, pruneActionsCache, restRate } from './github.js';
-import { QUERY, WATCH_QUERY, applyRunCommits, attention, checksHidden, watchReason, watchedKeys, rowSessions, sessionId, sessionLinksIn, tabFor, touchesChecks, diff, mapLimit, mergeConfig, normalize, profileFor, rowsForUrl, scopedQuery, settleEnded, summarizeErrors } from './lib.js';
+import { QUERY, WATCH_QUERY, applyRunCommits, attention, checksHidden, watchReason, watchedKeys, rowSessions, sessionId, sessionLinksIn, tabFor, touchesChecks, diff, mapLimit, mergeConfig, normalize, profileFor, rowsForUrl, scopedQuery, settleEnded, summarizeErrors, badgeLinks } from './lib.js';
 
 async function settings() {
   const { config, token } = await chrome.storage.local.get(['config', 'token']);
@@ -391,7 +391,8 @@ async function match(url) {
   const [{ snapshot, ended = {} }, { config, token }] = await Promise.all([chrome.storage.local.get(['snapshot', 'ended']), settings()]);
   // Open PRs first, then the merged or closed ones, newest first; each with
   // its Claude sessions, for pages that show both (a PR preview).
-  const rows = rowsForUrl([...(snapshot?.rows || []), ...Object.values(ended)], url, config).map((r) => ({ ...r, sessions: rowSessions(r) }));
+  // Merged and closed PRs carry no links: their preview is usually gone.
+  const rows = rowsForUrl([...(snapshot?.rows || []), ...Object.values(ended)], url, config).map((r) => ({ ...r, sessions: rowSessions(r), links: r.ended ? [] : badgeLinks(r, config) }));
   const setup = !token ? 'no-token' : !Object.keys(config.repos).length ? 'no-repos' : snapshot?.error ? 'error' : !snapshot?.fetchedAt ? 'loading' : 'ok';
   return { rows, setup, error: snapshot?.error || '' };
 }
@@ -402,10 +403,10 @@ async function match(url) {
 const SESSIONS_TTL_MS = 5 * 60 * 1000;
 const sessionCache = new Map();
 async function sessionsFor(repo, number) {
-  const { snapshot, ended = {} } = await chrome.storage.local.get(['snapshot', 'ended']);
+  const [{ snapshot, ended = {} }, { config }] = await Promise.all([chrome.storage.local.get(['snapshot', 'ended']), settings()]);
   const same = (r) => r.repo.toLowerCase() === repo.toLowerCase() && r.number === number;
   const row = snapshot?.rows?.find(same);
-  if (row) return { sessions: rowSessions(row), stale: Object.keys(row.staleReports || {}), state: 'OPEN' };
+  if (row) return { sessions: rowSessions(row), stale: Object.keys(row.staleReports || {}), state: 'OPEN', links: badgeLinks(row, config) };
   const done = Object.values(ended).find(same);
   if (done) return { sessions: rowSessions(done), stale: [], state: done.ended };
   const key = `${repo.toLowerCase()}#${number}`;

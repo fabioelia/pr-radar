@@ -93,6 +93,7 @@ export const SECTIONS = [
       { k: 'kind', label: 'Show as', type: 'select', options: [['link', 'Link'], ['text', 'Text']], showIf: (r) => !r.report },
       { k: 'all', label: 'Every match', type: 'checkbox', showIf: (r) => !r.report },
       { k: 'notify', label: 'Notify on change', type: 'checkbox' },
+      { k: 'badge', label: 'Show on badges', type: 'checkbox', showIf: (r) => !r.report && r.kind === 'link' },
       { k: 'artifacts', label: 'Click downloads artifacts named', ph: '^qa-screenshots', optional: true },
       { k: 'alert', label: 'Needs me if the value matches', ph: '⛔', optional: true },
       { k: 'commit', label: 'Commit it was made for (regex; group 1)', ph: '"sha":"([0-9a-f]{7,40})"', optional: true, showIf: (r) => !r.report },
