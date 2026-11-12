@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>PR Radar</title>
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="appbar">
+      <img src="icon.png" alt="" width="18" height="18" />
+      <strong>PR Radar</strong>
+      <span class="spacer"></span>
+      <button id="inbox" class="ghost icon" title="Notifications" aria-label="Notifications" aria-pressed="false"><span id="inboxCount" class="inbox-count" hidden></span></button>
+      <button id="refresh" class="ghost icon" title="Refresh now" aria-label="Refresh now"></button>
+      <button id="settings" class="ghost icon" title="Settings" aria-label="Settings"></button>
+    </header>
+    <div class="status"><span id="updated"></span><span class="spacer"></span><span id="rate"></span></div>
+    <div class="controls">
+      <label class="search">
+        <span id="searchIcon"></span>
+        <input id="filter" type="search" placeholder="Filter by title, #number, label, author" aria-label="Filter PRs" />
+      </label>
+      <button id="needsOnly" class="toggle" aria-pressed="false" title="Only PRs that need you">
+        Needs me <span id="needsCount" class="count">0</span>
+      </button>
+    </div>
+    <div id="error" class="banner error" hidden></div>
+    <main id="list"></main>
+    <main id="notices" hidden></main>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

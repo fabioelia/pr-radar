@@ -1,0 +1,47 @@
+{
+  "name": "pr-radar-mac",
+  "productName": "PR Radar",
+  "version": "0.1.0",
+  "description": "PR Radar in the macOS menu bar: the extension's panel, behind a menu bar icon with a count.",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "copy": "node copy-ext.mjs",
+    "start": "npm run copy && electron .",
+    "dist": "npm run copy && electron-builder --mac dmg zip",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "electron": "45.1.0",
+    "electron-builder": "26.18.1"
+  },
+  "build": {
+    "appId": "dev.prradar.menubar",
+    "productName": "PR Radar",
+    "files": [
+      "main.js",
+      "shim.js",
+      "preload.cjs",
+      "shared-store.cjs",
+      "host.cjs",
+      "toast.html",
+      "toast.js",
+      "toast-preload.cjs",
+      "ext/**",
+      "assets/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/app-icon.png",
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSAppleEventsUsageDescription": "PR Radar switches to the Chrome tab that already shows a PR instead of opening a new one."
+      }
+    }
+  }
+}

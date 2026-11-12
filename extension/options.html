@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>PR Radar settings</title>
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-head">
+        <img src="icon.png" alt="" width="36" height="36" />
+        <div>
+          <h1>PR Radar settings</h1>
+          <p class="muted">What the side panel tracks, and the GitHub token it reads with.</p>
+        </div>
+      </header>
+      <div id="sharing" class="sharing" hidden></div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>GitHub token</h2>
+          <p class="muted">
+            Stored only in this browser profile. Use a fine-grained token (steps below) or a classic token with the
+            <code>repo</code> scope.
+          </p>
+        </div>
+        <details class="howto">
+          <summary>How to set up a fine-grained token</summary>
+          <ol>
+            <li>
+              Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Fine-grained tokens → Generate new token</a>.
+              Name it <strong>PR Radar</strong> and pick an expiration. You'll paste a new one here when it expires.
+            </li>
+            <li>
+              <strong>Resource owner</strong>: the organization that owns the repos you track. A fine-grained token covers one owner, and
+              the panel uses one token, so for repos under several owners use a classic token instead.
+            </li>
+            <li><strong>Repository access</strong>: <em>All repositories</em>, or <em>Only select repositories</em> with the ones you track.</li>
+            <li>
+              <strong>Permissions → Repositories → Add permissions</strong>:
+              <table class="perms">
+                <tr><th>Permission</th><th>Access</th><th>Used for</th></tr>
+                <tr><td>Pull requests</td><td>Read and write</td><td>PRs, reviews; Mark ready, Convert to draft, Close</td></tr>
+                <tr><td>Issues</td><td>Read and write</td><td>Comments (QA and Playwright reports, session links); adding and removing labels</td></tr>
+                <tr><td>Contents</td><td>Read-only</td><td>A PR's commits, which is how its checks are found</td></tr>
+                <tr><td>Commit statuses</td><td>Read-only</td><td>Status checks</td></tr>
+                <tr><td>Actions</td><td>Read and write</td><td>Check results, job logs and screenshots; Re-run</td></tr>
+                <tr><td>Metadata</td><td>Read-only</td><td>Added by GitHub automatically</td></tr>
+              </table>
+              Only reading, no buttons? Make all of them <em>Read-only</em>.
+            </li>
+            <li>
+              <strong>Generate token</strong>, copy it, paste it below, and click <strong>Test token</strong>. If the organization
+              requires approval, its repos don't show up until an owner approves the token.
+            </li>
+            <li>
+              <strong>Check access</strong> on one of your repos: every row should be green, and <em>Check runs</em> gray.
+              GitHub doesn't give fine-grained tokens check runs, so the panel reads the same results from the Actions API.
+            </li>
+          </ol>
+          <p class="muted">
+            A classic token is simpler: <a href="https://github.com/settings/tokens/new?scopes=repo&description=PR%20Radar" target="_blank" rel="noopener">create one with the <code>repo</code> scope</a>,
+            and authorize it for the organization's single sign-on (<em>Configure SSO</em>) if the organization uses it.
+          </p>
+        </details>
+        <div class="token-row">
+          <input id="token" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" aria-label="GitHub token" />
+          <button id="reveal" class="ghost">Show</button>
+          <button id="test">Test token</button>
+        </div>
+        <div id="tokenInfo" class="token-info" hidden></div>
+        <div id="access" hidden>
+          <details id="repoList"><summary></summary><ul></ul></details>
+          <div class="access-row">
+            <select id="repo" aria-label="Repo to check"></select>
+            <button id="check">Check access</button>
+          </div>
+          <div id="probes" class="probes"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="notifications">
+        <div class="panel-head">
+          <h2>Notifications</h2>
+          <p class="muted">
+            PR Radar notifies when something you chose changes: a check marked <em>Notify when it finishes</em>, a label marked
+            <em>Notify when added</em>, a report marked <em>Notify on change</em>, a new PR in your list, and anything on a PR you
+            watch with its bell.
+          </p>
+        </div>
+        <div class="token-row">
+          <span id="notifyStatus" class="notify-status"></span>
+          <span class="spacer"></span>
+          <button id="testNotify">Send a test notification</button>
+        </div>
+        <p id="notifyHelp" class="muted notify-help" hidden>
+          No test notification? On a Mac, open System Settings → Notifications, find <strong>Google Chrome</strong>, and allow
+          notifications with the Banners or Alerts style. Also check that a Focus mode isn't on. (The menu bar app draws its own
+          cards in the top-right corner unless it is signed with an Apple developer certificate.)
+        </p>
+        <details id="notifyLogBox">
+          <summary>Recent notifications</summary>
+          <ul id="notifyLog" class="notify-log"></ul>
+        </details>
+      </section>
+
+      <div class="track-head">
+        <h2>What to track</h2>
+        <span id="suggestStatus" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="import" class="ghost sm" title="Load settings from a file">Import</button>
+        <button id="export" class="ghost sm" title="Save these settings to a file">Export</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden />
+        <div class="segmented" id="viewTabs" role="tablist">
+          <button data-tab="form" class="on" role="tab">Form</button>
+          <button data-tab="json" role="tab">JSON</button>
+        </div>
+      </div>
+      <div id="form"></div>
+      <textarea id="config" spellcheck="false" hidden aria-label="Config as JSON"></textarea>
+      <datalist id="dl-labels"></datalist>
+      <datalist id="dl-checks"></datalist>
+    </main>
+
+    <div class="savebar">
+      <div class="savebar-inner">
+        <span id="dirtyDot" class="dot"></span>
+        <span id="status" class="muted">All changes saved</span>
+        <span class="spacer"></span>
+        <button id="reset" class="ghost">Reset to defaults</button>
+        <button id="save" class="primary">Save</button>
+      </div>
+    </div>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

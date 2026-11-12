@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "PR Radar",
+  "version": "0.8.0",
+  "description": "Your open PRs, their checks, labels and linked Claude sessions in one side panel.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0ekXkd+B0n8BTtNQ3Yt5rzVXT/f8i85Y/OF0O8ve8lCMY+cmccnTfXAl63fByCkbEDXlOI+3zRE8lUb5ZZTqOtrsdB5Cj4MEfG0yptHvmtbkFLzZHy4siVd1N/tHSDB98aIOheG30DqMpA36kG2I89bb1FIhxn0tsvtDNZYNlRile4cpaPqUmjwkdpZ2k7VglCn4mmEzxCTphvMB2Lb9ZqdOYhmfJbZsUtBX4QCp6h1gjxaXxaW+wHw8qmsoU/wtHjWrW+xxw4H7JnriIr/OvFcfOiAZ5ZfcNP9N975jPhuhlMclCEGUnCowE95UVMzMHwy3IEslMb4/ZGLacOP1owIDAQAB",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "sidePanel",
+    "downloads",
+    "idle",
+    "nativeMessaging",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://github.com/*",
+    "https://claude.ai/*",
+    "https://*.blob.core.windows.net/*",
+    "https://*.actions.githubusercontent.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "PR Radar",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "128": "icon.png"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://github.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

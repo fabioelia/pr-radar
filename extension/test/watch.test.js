@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { cfg } from './fixture.js';
+import { diff, normalize, watchReason, watchedKeys } from '../lib.js';
+
+const check = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion, title: '', detailsUrl: '', startedAt: '2026-11-11T00:00:00Z' });
+function pr({ checks = [], labels = [], comments = [] } = {}) {
+  return {
+    id: 'PR_1', number: 1, title: 'A PR', url: 'https://github.com/acme/widgets/pull/1', isDraft: false, state: 'OPEN', mergeable: 'MERGEABLE', reviewDecision: null, updatedAt: '2026-11-11T00:00:00Z', headRefOid: 'abc',
+    author: { login: 'me' }, repository: { nameWithOwner: 'acme/widgets' }, body: '',
+    labels: { nodes: labels.map((name) => ({ name, color: 'ccc' })) }, comments: { nodes: comments.map((body, i) => ({ body, url: `c${i}` })) }, reviews: { nodes: [] },
+    commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: checks } } } }] },
+  };
+}
+
+test('a PR is watched while a check that notifies is running, or by its bell', () => {
+  const running = normalize(pr({ checks: [check('qa-run', 'IN_PROGRESS', null)] }), cfg);
+  const done = normalize(pr({ checks: [check('qa-run', 'COMPLETED', 'SUCCESS')] }), cfg);
+  assert.equal(watchReason(running, cfg), 'auto');
+  assert.equal(watchReason(done, cfg), null);
+  assert.equal(watchReason(done, cfg, new Set([done.key])), 'manual');
+  assert.equal(watchReason(running, { ...cfg, autoWatch: false }), null);
+  // A running check nobody asked to be told about doesn't count.
+  const quiet = { ...cfg, repos: { 'acme/widgets': { ...cfg.repos['acme/widgets'], checks: [{ label: 'QA run', match: '^qa-run$' }] } } };
+  assert.equal(watchReason(normalize(pr({ checks: [check('qa-run', 'IN_PROGRESS', null)] }), quiet), quiet), null);
+  // A Playwright run still in progress counts, as its report notifies.
+  const pw = normalize(pr({ comments: ['### Playwright Test Results\n\n⏳ **Running…** 10/50 tests · 1/5 suites\n<!-- playwright-results -->'] }), cfg);
+  assert.equal(watchReason(pw, cfg), 'auto');
+});
+
+test('the QA run landing notifies; a bell makes every change notify', () => {
+  const before = normalize(pr({ checks: [check('qa-run', 'IN_PROGRESS', null)] }), cfg);
+  const after = normalize(pr({ checks: [check('qa-run', 'COMPLETED', 'FAILURE')], labels: ['jira-ticket'] }), cfg);
+  assert.deepEqual(diff([before], [after], cfg).map((e) => e.message), ['QA run failed']);
+  assert.deepEqual(diff([before], [after], cfg, new Set([after.key])).map((e) => e.message), ['Label: jira-ticket\nQA run failed']);
+});
+
+test('a rung group watches its PRs, new ones included, except those unwatched one by one', () => {
+  const snap = (keys) => ({ sections: [{ title: 'My PRs', keys }, { title: 'Review requested', keys: ['o/r#9'] }] });
+  const lists = { watched: ['o/r#9'], watchedGroups: ['My PRs'], unwatched: ['o/r#2'] };
+  assert.deepEqual([...watchedKeys(snap(['o/r#1', 'o/r#2']), lists)].sort(), ['o/r#1', 'o/r#9']);
+  // A PR that joins the group later is watched without anyone ringing anything.
+  assert.deepEqual([...watchedKeys(snap(['o/r#1', 'o/r#2', 'o/r#3']), lists)].sort(), ['o/r#1', 'o/r#3', 'o/r#9']);
+  assert.deepEqual([...watchedKeys(snap(['o/r#1']), {})], []);
+});
