@@ -731,11 +731,82 @@ function renderNotices() {
           h('span', { class: 'notice-title' }, title),
           h('span', { class: 'when', title: new Date(n.at).toLocaleString() }, ago(n.at)),
         ),
-        pr ? h('div', { class: 'notice-pr' }, `${pr.repo} #${pr.number}`, muteButton(`${pr.repo}#${pr.number}`)) : null,
+        pr ? h('div', { class: 'notice-pr' }, `${pr.repo} #${pr.number}`, tuneButton(n), muteButton(`${pr.repo}#${pr.number}`)) : null,
         h('ul', { class: 'notice-lines' }, ...lines.map((l) => h('li', {}, dot(l.tone || 'neutral'), h('span', {}, l.text)))),
+        state.tuning === n.at ? tunePanel(n) : null,
       );
     }),
   );
+}
+
+// ─── Tuning what notifies, from a notification ───────────────────────────
+// Each notification records what produced it (a check, an extractor, a
+// label, an event such as "joined your list"); Tune offers each one's
+// notify choice and saves it into the config, as settings would.
+const EVENT_NAMES = { newPR: 'A PR joining your list', left: 'A PR leaving your list', ready: 'A draft marked ready' };
+const KIND_NAMES = { check: 'Check', extractor: 'From PR text', label: 'Label' };
+const stop = (e) => (e.preventDefault(), e.stopPropagation());
+
+function sourceItem(config, repo, src) {
+  const p = config.repos?.[repo];
+  if (!p) return null;
+  if (src.kind === 'check') return p.checks.find((c) => c.label === src.name);
+  if (src.kind === 'extractor') return p.extractors.find((e) => e.name === src.name);
+  if (src.kind === 'label') return p.labels.find((l) => l.name === src.name);
+  return null;
+}
+
+// The choices for one source and the one in force, or null when it can't
+// be tuned here (a PR's bell, or an item since removed from settings).
+function sourceChoices(config, repo, src) {
+  if (src.kind === 'event') return { title: EVENT_NAMES[src.name] || src.name, current: config.notifyOn?.[src.name] !== false ? 'all' : '', options: [['all', 'Notify'], ['', 'Never']] };
+  const item = sourceItem(config, repo, src);
+  if (!item) return null;
+  const title = `${KIND_NAMES[src.kind]}: ${src.name}`;
+  if (src.kind === 'label') return { title, current: item.notify ? 'all' : '', options: [['all', 'Notify'], ['', 'Never']] };
+  const current = item.notify === true ? 'all' : item.notify === 'fail' ? 'fail' : '';
+  // An extractor knows a failure only by its "Needs me if" pattern.
+  const canFail = src.kind === 'check' || !!item.alert;
+  return { title, current, options: [['all', 'Every result'], ...(canFail ? [['fail', 'Only failures']] : []), ['', 'Never']] };
+}
+
+async function setSource(repo, src, value) {
+  const { config: saved } = await chrome.storage.local.get('config');
+  const config = mergeConfig(saved);
+  if (src.kind === 'event') config.notifyOn = { ...config.notifyOn, [src.name]: value !== '' };
+  else {
+    const item = sourceItem(config, repo, src);
+    if (!item) return;
+    if (value === 'all') item.notify = true;
+    else if (value) item.notify = value;
+    else delete item.notify;
+  }
+  await chrome.storage.local.set({ config });
+}
+
+function tuneButton(n) {
+  if (!n.sources?.length) return null;
+  const open = state.tuning === n.at;
+  return h(
+    'button',
+    { class: `ghost sm notice-act${open ? ' on tuning' : ''}`, title: 'Choose what notifies you, for what produced this', 'aria-expanded': String(open), onclick: (e) => (stop(e), (state.tuning = open ? null : n.at), renderNotices()) },
+    'Tune',
+  );
+}
+
+function tunePanel(n) {
+  const rows = n.sources.map((src) => {
+    if (src.kind === 'bell') return h('div', { class: 'tune-row' }, h('span', { class: 'tune-name' }, 'This PR’s bell'), h('span', { class: 'tune-note' }, 'Every change notifies while it’s on'));
+    const c = sourceChoices(state.config, n.repo, src);
+    if (!c) return h('div', { class: 'tune-row' }, h('span', { class: 'tune-name' }, src.name), h('span', { class: 'tune-note' }, 'No longer in settings'));
+    return h(
+      'div',
+      { class: 'tune-row' },
+      h('span', { class: 'tune-name' }, c.title),
+      h('span', { class: 'segmented', role: 'group', 'aria-label': c.title }, c.options.map(([v, t]) => h('button', { class: v === c.current ? 'on' : '', 'aria-pressed': String(v === c.current), onclick: (e) => (stop(e), setSource(n.repo, src, v)) }, t))),
+    );
+  });
+  return h('div', { class: 'tune', onclick: stop }, h('div', { class: 'tune-head' }, 'Notify me about'), rows);
 }
 
 // Mute (or unmute) a PR straight from one of its notifications, while the
@@ -746,7 +817,7 @@ function muteButton(key) {
   return h(
     'button',
     {
-      class: `ghost sm notice-mute${muted ? ' on' : ''}`,
+      class: `ghost sm notice-act notice-mute${muted ? ' on' : ''}`,
       title: muted ? 'Notify me about this PR again' : 'Stop notifications for this PR',
       onclick: (e) => {
         e.preventDefault();
@@ -829,7 +900,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 document.addEventListener('focusout', () => setTimeout(() => state.renderPending && render()));
-chrome.storage.onChanged.addListener((c) => (c.snapshot || c.config || c.watched || c.watchedGroups || c.unwatched || c.muted) && (load(), renderNotices()));
+chrome.storage.onChanged.addListener((c) => (c.snapshot || c.config || c.watched || c.watchedGroups || c.unwatched || c.muted) && load().then(renderNotices));
 chrome.storage.onChanged.addListener((c) => (c.notificationLog || c.notificationsSeenAt) && loadNotices());
 chrome.tabs.onActivated.addListener(trackTab);
 chrome.tabs.onUpdated.addListener((_id, info) => info.url && trackTab());

@@ -14,6 +14,8 @@ export const PROFILE_KEYS = ['labels', 'checks', 'extractors', 'actions'];
 // What a newly added repo starts with.
 //   labels:  {name, kind, notify}. kind: alert | ok | pending | info; an
 //            `alert` label puts the PR in "needs you"; notify on add.
+//   notify (checks and extractors): true notifies on every result, 'fail'
+//            only on failures (see notifyLevel); labels take true.
 //   checks:  {label, match, rollup, notify, showTitle, alertTitle}. match: a
 //            regex on the check name; rollup: one chip summing every match
 //            (the worst state wins); showTitle: show the check's output
@@ -484,6 +486,26 @@ export function attention(row, config) {
 
 const STATE_WORD = { pass: 'passed', fail: 'failed', cancelled: 'cancelled', neutral: 'finished' };
 
+// A check's or extractor's `notify`: true for every result, 'fail' for only
+// failures (a failed or cancelled check, a check title matching alertTitle,
+// a value matching the extractor's alert pattern), anything else for never.
+const notifyLevel = (item, all) => (all ? 'all' : item.notify === true ? 'all' : item.notify === 'fail' ? 'fail' : '');
+const matches = (re, text) => {
+  try {
+    return !!re && !!text && new RegExp(re).test(text);
+  } catch {
+    return false;
+  }
+};
+
+// What a report notifies about: its milestones, not every progress update.
+// A Playwright run notifies when it starts, when its first failure shows up,
+// and when it finishes; any other report when its summary changes.
+function reportMilestone(r, summary) {
+  if (r?.kind === 'playwright') return `${r.state}|${r.failed > 0}|${r.run || ''}`;
+  return summary;
+}
+
 // Returns one {key, title, message, url} per PR that changed in a way the
 // config marks notify. An empty `prev` (first run, fresh install) yields
 // nothing, so installing doesn't fire a notification per open PR.
@@ -581,32 +603,48 @@ export function diff(prev, next, config, everything = new Set(), states = {}, qu
     const all = everything.has(row.key);
     const notifyLabels = new Set(config.labels.filter((l) => l.notify).map((l) => l.name));
     const lines = [];
+    // What made each line, so the notifications list can offer to tune it.
+    const sources = [];
+    const from = (kind, name, item) => {
+      const src = !all || item?.notify ? { kind, name } : { kind: 'bell', name: '' };
+      if (!sources.some((s) => s.kind === src.kind && s.name === src.name)) sources.push(src);
+    };
     if (!old) {
-      if (on('newPR')) lines.push('New in your list');
+      if (on('newPR')) lines.push('New in your list'), from('event', 'newPR', { notify: true });
     } else {
       for (const name of row.allLabels) {
-        if ((all || notifyLabels.has(name)) && !old.allLabels.includes(name)) lines.push(`Label: ${name}`);
+        if ((all || notifyLabels.has(name)) && !old.allLabels.includes(name)) lines.push(`Label: ${name}`), from('label', name, { notify: notifyLabels.has(name) });
       }
       config.checks.forEach((c, i) => {
         const a = old.checks[i];
         const b = row.checks[i];
-        if (!(c.notify || all) || !a || !b) return;
+        const level = notifyLevel(c, all);
+        if (!level || !a || !b) return;
+        const failed = b.state === 'fail' || b.state === 'cancelled' || matches(c.alertTitle, b.title);
+        if (level === 'fail' && !failed) return;
+        const n = lines.length;
         if (a.state !== b.state && STATE_WORD[b.state]) lines.push(`${c.label} ${STATE_WORD[b.state]}${b.title ? `: ${b.title}` : ''}`);
         else if (b.title && a.title !== b.title) lines.push(`${c.label}: ${b.title}`);
+        if (lines.length > n) from('check', c.label, c);
       });
       for (const ex of config.extractors) {
-        if (!(ex.notify || all)) continue;
+        const level = notifyLevel(ex, all);
+        if (!level) continue;
         const a = (old.extracted[ex.name] || []).join('\n');
         const b = (row.extracted[ex.name] || []).join('\n');
-        if (b && a !== b) lines.push(`${ex.name}: ${b}`);
+        if (!b || a === b) continue;
+        if (ex.report && reportMilestone(old.reports?.[ex.name], a) === reportMilestone(row.reports?.[ex.name], b)) continue;
+        if (level === 'fail' && !matches(ex.alert, b)) continue;
+        lines.push(`${ex.name}: ${b}`);
+        from('extractor', ex.name, ex);
       }
-      if (old.isDraft && !row.isDraft && on('ready')) lines.push('Marked ready for review');
+      if (old.isDraft && !row.isDraft && on('ready')) lines.push('Marked ready for review'), from('event', 'ready', { notify: true });
     }
-    if (lines.length) events.push({ key: row.key, title: `${row.key} ${row.title}`, message: lines.join('\n'), url: row.url });
+    if (lines.length) events.push({ key: row.key, repo: row.repo, title: `${row.key} ${row.title}`, message: lines.join('\n'), url: row.url, sources });
   }
   for (const old of prev) {
     if (!after.has(old.key) && on('left') && !quiet.has(old.key)) {
-      events.push({ key: old.key, title: `${old.key} ${old.title}`, message: LEFT_WORD[states[old.key]] || 'Left your list (merged or closed?)', url: old.url });
+      events.push({ key: old.key, repo: old.repo, title: `${old.key} ${old.title}`, message: LEFT_WORD[states[old.key]] || 'Left your list (merged or closed?)', url: old.url, sources: [{ kind: 'event', name: 'left' }] });
     }
   }
   return events;
@@ -769,7 +807,11 @@ export function validateConfig(cfg) {
         bad(`check "${c.label}": bad regex (${e.message})`);
       }
     }
+    const badNotify = (it) => ![undefined, true, false, 'fail'].includes(it.notify);
+    for (const c of p.checks || []) if (badNotify(c)) bad(`check "${c.label}": notify must be true, false or "fail"`);
     for (const ex of p.extractors || []) {
+      if (badNotify(ex)) bad(`extractor "${ex.name}": notify must be true, false or "fail"`);
+      if (ex.notify === 'fail' && !ex.alert) bad(`extractor "${ex.name}": "Only failures" needs a "Needs me if" pattern to know what a failure is`);
       if (ex.report && !PARSERS[ex.report]) bad(`extractor "${ex.name}": unknown report ${ex.report}`);
       if (!ex.report && !ex.regex) bad(`extractor "${ex.name}" has no pattern`);
       try {

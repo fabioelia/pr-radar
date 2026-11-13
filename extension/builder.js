@@ -5,6 +5,17 @@
 import { h, icon } from './dom.js';
 import { DEFAULT_CONFIG as D, NEW_REPO_PROFILE, nameToRegex, regexToName } from './lib.js';
 
+// The notify choice for checks and extractors: saved as true, 'fail' or
+// left out (never).
+const notifyField = (label) => ({
+  k: 'notify',
+  label,
+  type: 'select',
+  options: [['', 'Never'], ['all', 'Every result'], ['fail', 'Only failures']],
+  toUi: (v) => (v === true ? 'all' : v),
+  fromUi: (v) => (v === 'all' ? true : v),
+});
+
 // Presets: what a new repo starts with, plus common starting points to edit.
 const EXAMPLES = {
   labels: [
@@ -74,7 +85,7 @@ export const SECTIONS = [
       { k: 'label', label: 'Short name', ph: 'CI' },
       { k: 'match', label: 'Check name', list: 'dl-checks', wide: true, toUi: regexToName, fromUi: nameToRegex },
       { k: 'rollup', label: 'Sum up every match', type: 'checkbox' },
-      { k: 'notify', label: 'Notify when it finishes', type: 'checkbox' },
+      notifyField('Notify me'),
       { k: 'showTitle', label: 'Show its result text', type: 'checkbox' },
       { k: 'alertTitle', label: 'Needs me if the text matches', ph: 'Not recommended', optional: true, showIf: (r) => r.showTitle },
     ],
@@ -93,7 +104,7 @@ export const SECTIONS = [
       { k: 'contains', label: 'Only in texts containing', optional: true },
       { k: 'kind', label: 'Show as', type: 'select', options: [['link', 'Link'], ['text', 'Text']], showIf: (r) => !r.report },
       { k: 'all', label: 'Every match', type: 'checkbox', showIf: (r) => !r.report },
-      { k: 'notify', label: 'Notify on change', type: 'checkbox' },
+      notifyField('Notify me'),
       { k: 'badge', label: 'Show on badges', type: 'checkbox', showIf: (r) => !r.report && r.kind === 'link' },
       { k: 'artifacts', label: 'Click downloads artifacts named', ph: '^qa-screenshots', optional: true },
       { k: 'alert', label: 'Needs me if the value matches', ph: '⛔', optional: true },

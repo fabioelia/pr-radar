@@ -75,7 +75,7 @@ async function notify(events) {
     const id = `${e.key || 'pr-radar'}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
     notificationUrls[id] = e.url;
     chrome.notifications.create(id, { type: 'basic', iconUrl: 'icon.png', title: e.title, message: e.message, priority: 2 });
-    notificationLog.unshift({ at: new Date().toISOString(), title: e.title, message: e.message, url: e.url });
+    notificationLog.unshift({ at: new Date().toISOString(), title: e.title, message: e.message, url: e.url, repo: e.repo, sources: e.sources });
   }
   const ids = Object.keys(notificationUrls);
   for (const k of ids.slice(0, Math.max(0, ids.length - 100))) delete notificationUrls[k];
