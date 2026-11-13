@@ -36,6 +36,7 @@ export const SECTIONS = [
     fields: [
       { k: 'title', label: 'Section name', ph: 'My PRs' },
       { k: 'q', label: 'GitHub search', ph: 'is:pr is:open author:@me', wide: true },
+      { k: 'mute', label: 'Mute notifications for its PRs', type: 'checkbox' },
     ],
     presets: [
       ...D.queries.map((q) => [q.title, q]),
@@ -206,6 +207,32 @@ function general(cfg, changed) {
   );
 }
 
+// The notifications not tied to one label, check or extractor, and where the
+// rest are switched.
+function notificationsPanel(cfg, changed) {
+  cfg.notifyOn ||= {};
+  const events = [
+    ['newPR', 'A PR joins your list'],
+    ['left', 'A PR is merged, closed or leaves your list'],
+    ['ready', 'A draft is marked ready'],
+  ];
+  return h(
+    'section',
+    { class: 'panel general' },
+    h(
+      'div',
+      { class: 'panel-head' },
+      h('h2', {}, 'What notifies you'),
+      h(
+        'p',
+        { class: 'muted' },
+        'Besides these, each label, check and extractor below has its own Notify switch, and a search can be muted. To silence one PR, use Mute in its card’s More menu or in the notifications list. A PR’s bell makes every change on it notify, even in a muted search.',
+      ),
+    ),
+    h('div', { class: 'switches' }, events.map(([k, t]) => toggle(t, cfg.notifyOn[k] !== false, (v) => ((cfg.notifyOn[k] = v), changed())))),
+  );
+}
+
 function sectionPanel(sec, target, changed, rerender) {
   const list = (target[sec.key] ||= []);
   const move = (i, d) => {
@@ -265,7 +292,7 @@ export function renderBuilder(root, cfg, onChange) {
         SECTIONS.filter((sec) => !sec.shared).map((sec) => sectionPanel(sec, cfg.repos[current], changed, rerender)),
       )
     : null;
-  root.replaceChildren(general(cfg, changed), ...shared, repoPicker(cfg, changed, rerender), perRepo || '');
+  root.replaceChildren(general(cfg, changed), notificationsPanel(cfg, changed), ...shared, repoPicker(cfg, changed, rerender), perRepo || '');
 }
 
 // The selected repo, whether the add form is open, and the repos the token

@@ -1,6 +1,6 @@
 import { pullShared, shareLocalChanges } from './shared.js';
 import { DRAFT_MUTATIONS, actionsContexts, emptyActionsCache, gh, graphql, prStates, prTexts, pruneActionsCache, restRate } from './github.js';
-import { QUERY, WATCH_QUERY, applyRunCommits, attention, checksHidden, watchReason, watchedKeys, rowSessions, sessionId, sessionLinksIn, tabFor, touchesChecks, diff, mapLimit, mergeConfig, normalize, profileFor, rowsForUrl, scopedQuery, settleEnded, summarizeErrors, badgeLinks } from './lib.js';
+import { QUERY, WATCH_QUERY, applyRunCommits, attention, checksHidden, watchReason, watchedKeys, rowSessions, sessionId, sessionLinksIn, tabFor, touchesChecks, diff, mapLimit, mergeConfig, normalize, profileFor, rowsForUrl, scopedQuery, settleEnded, summarizeErrors, badgeLinks, quietKeys } from './lib.js';
 
 async function settings() {
   const { config, token } = await chrome.storage.local.get(['config', 'token']);
@@ -139,7 +139,14 @@ async function poll() {
     const states = Object.fromEntries(left.filter((r) => byId[r.id]).map((r) => [r.key, byId[r.id]]));
     const { ended: prevEnded } = await chrome.storage.local.get('ended');
     await chrome.storage.local.set({ ended: settleEnded(prevEnded, left, seen, states) });
-    await notify(diff(prev?.rows, rows, config, watchedKeys({ sections }, lists), states));
+    // Muted PRs, and PRs only in a muted search, stay quiet; a PR that left
+    // is judged by the search it was in.
+    const muted = new Set(lists.muted || []);
+    const everything = new Set([...watchedKeys({ sections }, lists)].filter((k) => !muted.has(k)));
+    const now = new Set(sections.flatMap((s) => s.keys));
+    const gone = (prev?.sections || []).map((s) => ({ ...s, keys: s.keys.filter((k) => !now.has(k)) }));
+    const quiet = quietKeys([...sections, ...gone], config, lists.muted, everything);
+    await notify(diff(prev?.rows, rows, config, everything, states, quiet));
     await pruneWatchLists(lists, rows);
     showCount(rows);
     const warning =
@@ -200,20 +207,25 @@ function refresh() {
 // or report that notifies, or a bell) are checked on their own every
 // watchSeconds, all in one request, so a result lands within seconds
 // rather than at the next poll. Paused only while the screen is locked.
-const WATCH_LISTS = ['watched', 'watchedGroups', 'unwatched'];
+// `muted` is the PRs you silenced from the panel; kept with the watch lists
+// because a PR's bell and its mute switch each other off.
+const WATCH_LISTS = ['watched', 'watchedGroups', 'unwatched', 'muted'];
 
 // Bells of PRs that have left every list are dropped, so the lists don't grow.
-async function pruneWatchLists({ watched = [], unwatched = [] }, rows) {
+async function pruneWatchLists({ watched = [], unwatched = [], muted = [] }, rows) {
   const live = new Set(rows.map((r) => r.key));
-  const next = { watched: watched.filter((k) => live.has(k)), unwatched: unwatched.filter((k) => live.has(k)) };
-  if (next.watched.length !== watched.length || next.unwatched.length !== unwatched.length) await chrome.storage.local.set(next);
+  const next = { watched: watched.filter((k) => live.has(k)), unwatched: unwatched.filter((k) => live.has(k)), muted: muted.filter((k) => live.has(k)) };
+  if (next.watched.length !== watched.length || next.unwatched.length !== unwatched.length || next.muted.length !== muted.length) await chrome.storage.local.set(next);
 }
 
 async function watchTargets() {
   const [{ config }, stored] = await Promise.all([settings(), chrome.storage.local.get(['snapshot', ...WATCH_LISTS])]);
   const { snapshot } = stored;
-  const manual = watchedKeys(snapshot, stored);
-  return { config, snapshot, manual, targets: (snapshot?.rows || []).filter((r) => watchReason(r, config, manual)) };
+  const muted = new Set(stored.muted || []);
+  const manual = new Set([...watchedKeys(snapshot, stored)].filter((k) => !muted.has(k)));
+  const quiet = quietKeys(snapshot?.sections, config, stored.muted, manual);
+  // A muted PR isn't checked between refreshes: nothing on it would notify.
+  return { config, snapshot, manual, quiet, targets: (snapshot?.rows || []).filter((r) => !muted.has(r.key) && watchReason(r, config, manual)) };
 }
 
 async function scheduleWatch() {
@@ -236,7 +248,7 @@ const backoff = { failures: 0, until: 0 };
 async function watchTick() {
   if (Date.now() < backoff.until) return;
   if ((await chrome.idle.queryState(60)) === 'locked') return;
-  const { config, snapshot, manual, targets } = await watchTargets();
+  const { config, snapshot, manual, quiet, targets } = await watchTargets();
   const { token } = await settings();
   if (!token || !targets.length) return scheduleWatch();
   const batches = [];
@@ -275,7 +287,7 @@ async function watchTick() {
   const fresh = new Map(rows.map((r) => [r.key, r]));
   // Only the PRs that came back are compared: one that closed is left to
   // the full poll below, which reports it once.
-  await notify(diff(targets.filter((r) => fresh.has(r.key)), rows, config, manual));
+  await notify(diff(targets.filter((r) => fresh.has(r.key)), rows, config, manual, {}, quiet));
   const merged = snapshot.rows.map((r) => fresh.get(r.key) || r);
   showCount(merged);
   const busy = merged.some((r) => r.stale || r.checks.some((c) => c.state === 'pending'));

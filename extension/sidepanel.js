@@ -225,12 +225,26 @@ function compactCard(row, current) {
 // card bell turned off inside a watched group is remembered as an exception
 // (unwatched). The background reads the same three lists.
 async function saveLists(lists) {
-  await chrome.storage.local.set({ watched: [...lists.watched], watchedGroups: [...lists.watchedGroups], unwatched: [...lists.unwatched] });
+  await chrome.storage.local.set({ watched: [...lists.watched], watchedGroups: [...lists.watchedGroups], unwatched: [...lists.unwatched], muted: [...lists.muted] });
 }
 
 function listsCopy() {
-  const { watched = [], watchedGroups = [], unwatched = [] } = state.lists;
-  return { watched: new Set(watched), watchedGroups: new Set(watchedGroups), unwatched: new Set(unwatched) };
+  const { watched = [], watchedGroups = [], unwatched = [], muted = [] } = state.lists;
+  return { watched: new Set(watched), watchedGroups: new Set(watchedGroups), unwatched: new Set(unwatched), muted: new Set(muted) };
+}
+
+const isMuted = (key) => (state.lists.muted || []).includes(key);
+
+// Muting stops every notification for the PR, its bell's included, so it
+// turns the bell off; ringing the bell unmutes it (toggleWatch).
+function toggleMute(key) {
+  const l = listsCopy();
+  if (l.muted.has(key)) l.muted.delete(key);
+  else {
+    l.muted.add(key);
+    l.watched.delete(key);
+  }
+  return saveLists(l);
 }
 
 const groupsOf = (key) => (state.snapshot?.sections || []).filter((s) => s.keys.includes(key)).map((s) => s.title);
@@ -243,7 +257,8 @@ function toggleWatch(row) {
     if (inWatchedGroup) l.unwatched.add(row.key);
   } else {
     l.unwatched.delete(row.key);
-    if (!inWatchedGroup) l.watched.add(row.key);
+    l.muted.delete(row.key);
+    if (!inWatchedGroup || isMuted(row.key)) l.watched.add(row.key);
   }
   return saveLists(l);
 }
@@ -287,6 +302,11 @@ function groupBell(section) {
 }
 
 function watchBits(row) {
+  if (isMuted(row.key)) {
+    const muted = h('span', { class: 'tag-sm muted', title: 'Muted: this PR never notifies you. Unmute it from More, or ring its bell.' }, 'muted');
+    const bell = h('button', { class: 'ghost icon sm bell', 'aria-pressed': 'false', 'aria-label': `Unmute and watch #${row.number}`, title: 'Unmute and watch', onclick: () => toggleWatch(row) }, icon('bell', 14));
+    return { live: muted, bell };
+  }
   const reason = watchReason(row, state.config, state.watched);
   const seconds = state.config.watchSeconds || 30;
   const live = reason
@@ -385,11 +405,12 @@ const INLINE_ACTIONS = 2;
 function moreMenu(row, rest) {
   const open = state.menu === row.key;
   const labels = h('button', { class: 'ghost sm', onclick: () => ((state.menu = null), togglePicker(row)) }, icon('tag', 13), 'Labels…');
+  const mute = h('button', { class: 'ghost sm', onclick: () => ((state.menu = null), toggleMute(row.key)) }, icon('bell', 13), isMuted(row.key) ? 'Unmute notifications' : 'Mute notifications');
   return h(
     'span',
     { class: 'more' },
     h('button', { class: `ghost sm${open ? ' on' : ''}`, 'aria-haspopup': 'menu', 'aria-expanded': String(open), onclick: () => ((state.menu = open ? null : row.key), render()) }, 'More', icon('chevron', 13)),
-    open ? h('div', { class: 'menu', role: 'menu' }, labels, rest) : null,
+    open ? h('div', { class: 'menu', role: 'menu' }, labels, mute, rest) : null,
   );
 }
 
@@ -639,6 +660,7 @@ function render() {
           s.title,
           h('span', { class: 'count' }, String(rows.length)),
         ),
+        config.queries.find((q) => q.title === s.title)?.mute ? h('span', { class: 'tag-sm muted', title: 'Muted in settings: PRs here only notify you when their bell is on.' }, 'muted') : null,
         !shut && s.keys.length ? groupBell(s) : null,
         !shut && rows.length
           ? h('button', { class: 'ghost sm', onclick: () => setCardShut(rows.map((r) => r.key), anyOpen) }, anyOpen ? 'Collapse all' : 'Expand all')
@@ -657,10 +679,10 @@ function render() {
 }
 
 async function load() {
-  const { snapshot, config, watched = [], watchedGroups = [], unwatched = [] } = await chrome.storage.local.get(['snapshot', 'config', 'watched', 'watchedGroups', 'unwatched']);
+  const { snapshot, config, watched = [], watchedGroups = [], unwatched = [], muted = [] } = await chrome.storage.local.get(['snapshot', 'config', 'watched', 'watchedGroups', 'unwatched', 'muted']);
   state.snapshot = snapshot || { rows: [], sections: [], error: null };
-  state.lists = { watched, watchedGroups, unwatched };
-  state.watched = watchedKeys(state.snapshot, state.lists);
+  state.lists = { watched, watchedGroups, unwatched, muted };
+  state.watched = new Set([...watchedKeys(state.snapshot, state.lists)].filter((k) => !muted.includes(k)));
   const live = new Set(state.snapshot.rows.map((r) => r.key));
   if (live.size && [...shutCards].some((k) => !live.has(k))) {
     for (const k of shutCards) if (!live.has(k)) shutCards.delete(k);
@@ -709,10 +731,30 @@ function renderNotices() {
           h('span', { class: 'notice-title' }, title),
           h('span', { class: 'when', title: new Date(n.at).toLocaleString() }, ago(n.at)),
         ),
-        pr ? h('div', { class: 'notice-pr' }, `${pr.repo} #${pr.number}`) : null,
+        pr ? h('div', { class: 'notice-pr' }, `${pr.repo} #${pr.number}`, muteButton(`${pr.repo}#${pr.number}`)) : null,
         h('ul', { class: 'notice-lines' }, ...lines.map((l) => h('li', {}, dot(l.tone || 'neutral'), h('span', {}, l.text)))),
       );
     }),
+  );
+}
+
+// Mute (or unmute) a PR straight from one of its notifications, while the
+// panel still tracks it. preventDefault keeps the entry's link from opening.
+function muteButton(key) {
+  if (!state.snapshot?.rows?.some((r) => r.key === key)) return null;
+  const muted = isMuted(key);
+  return h(
+    'button',
+    {
+      class: `ghost sm notice-mute${muted ? ' on' : ''}`,
+      title: muted ? 'Notify me about this PR again' : 'Stop notifications for this PR',
+      onclick: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleMute(key);
+      },
+    },
+    muted ? 'Muted · Unmute' : 'Mute',
   );
 }
 
@@ -787,7 +829,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 document.addEventListener('focusout', () => setTimeout(() => state.renderPending && render()));
-chrome.storage.onChanged.addListener((c) => (c.snapshot || c.config || c.watched || c.watchedGroups || c.unwatched) && load());
+chrome.storage.onChanged.addListener((c) => (c.snapshot || c.config || c.watched || c.watchedGroups || c.unwatched || c.muted) && (load(), renderNotices()));
 chrome.storage.onChanged.addListener((c) => (c.notificationLog || c.notificationsSeenAt) && loadNotices());
 chrome.tabs.onActivated.addListener(trackTab);
 chrome.tabs.onUpdated.addListener((_id, info) => info.url && trackTab());

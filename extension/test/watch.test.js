@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { cfg } from './fixture.js';
-import { diff, normalize, watchReason, watchedKeys } from '../lib.js';
+import { diff, normalize, quietKeys, watchReason, watchedKeys } from '../lib.js';
 
 const check = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion, title: '', detailsUrl: '', startedAt: '2026-11-11T00:00:00Z' });
 function pr({ checks = [], labels = [], comments = [] } = {}) {
@@ -42,4 +42,21 @@ test('a rung group watches its PRs, new ones included, except those unwatched on
   // A PR that joins the group later is watched without anyone ringing anything.
   assert.deepEqual([...watchedKeys(snap(['o/r#1', 'o/r#2', 'o/r#3']), lists)].sort(), ['o/r#1', 'o/r#3', 'o/r#9']);
   assert.deepEqual([...watchedKeys(snap(['o/r#1']), {})], []);
+});
+
+test('muted PRs and muted searches stay quiet; a bell beats a muted search, not a muted PR', () => {
+  const config = { ...cfg, queries: [{ title: 'Mine', q: 'a' }, { title: 'Reviews', q: 'b', mute: true }] };
+  const sections = [{ title: 'Mine', keys: ['acme/widgets#1', 'acme/widgets#2'] }, { title: 'Reviews', keys: ['acme/widgets#3', 'acme/widgets#4'] }];
+  const quiet = quietKeys(sections, config, ['acme/widgets#1'], new Set(['acme/widgets#4']));
+  assert.deepEqual([...quiet].sort(), ['acme/widgets#1', 'acme/widgets#3']);
+});
+
+test('the event switches turn off new, left and ready notifications', () => {
+  const row = (n, extra = {}) => ({ key: `acme/widgets#${n}`, repo: 'acme/widgets', number: n, title: `PR ${n}`, url: `u${n}`, isDraft: false, allLabels: [], checks: [], extracted: {}, ...extra });
+  const prev = [row(1, { isDraft: true }), row(2)];
+  const next = [row(1), row(3)];
+  const messages = (notifyOn, quiet) => diff(prev, next, { ...cfg, notifyOn }, new Set(), {}, quiet).map((e) => `${e.key}: ${e.message}`);
+  assert.deepEqual(messages({ newPR: true, left: true, ready: true }), ['acme/widgets#1: Marked ready for review', 'acme/widgets#3: New in your list', 'acme/widgets#2: Left your list (merged or closed?)']);
+  assert.deepEqual(messages({ newPR: false, left: false, ready: false }), []);
+  assert.deepEqual(messages({}, new Set(['acme/widgets#1', 'acme/widgets#2'])), ['acme/widgets#3: New in your list']);
 });

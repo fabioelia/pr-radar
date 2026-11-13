@@ -65,6 +65,11 @@ export const DEFAULT_CONFIG = {
   ],
   showOtherLabels: false,
   attention: { failedChecks: true, changesRequested: true, conflicts: true },
+  // The notifications not tied to a label, check or extractor (those have
+  // their own `notify`): a PR joining your list, leaving it (merged, closed,
+  // or no longer matching), a draft marked ready. A search with `mute: true`
+  // never notifies for its PRs, unless you ring a PR's bell.
+  notifyOn: { newPR: true, left: true, ready: true },
   // Sites besides claude.ai and github.com that show the PR badge, such as
   // a team's preview deployments: Chrome match patterns
   // (https://*.preview.example.com/*). A page shows the badge of the tracked
@@ -548,20 +553,36 @@ export function settleEnded(ended, left, keys, states, now = Date.now()) {
 
 const LEFT_WORD = { MERGED: 'Merged', CLOSED: 'Closed', OPEN: 'No longer matches your searches' };
 
-export function diff(prev, next, config, everything = new Set(), states = {}) {
+// The PRs that must not notify: the ones you muted, and the ones shown only
+// under a search marked `mute`, unless their bell is on (`everything`). A
+// muted PR stays quiet even inside a group whose bell is on.
+export function quietKeys(sections = [], config, muted = [], everything = new Set()) {
+  const mutedSearches = new Set((config.queries || []).filter((q) => q.mute).map((q) => q.title));
+  const loud = new Set(sections.filter((s) => !mutedSearches.has(s.title)).flatMap((s) => s.keys));
+  const quiet = new Set(muted);
+  for (const s of sections) {
+    if (!mutedSearches.has(s.title)) continue;
+    for (const k of s.keys) if (!loud.has(k) && !everything.has(k)) quiet.add(k);
+  }
+  return quiet;
+}
+
+export function diff(prev, next, config, everything = new Set(), states = {}, quiet = new Set()) {
   if (!prev || !prev.length) return [];
   const before = Object.fromEntries(prev.map((r) => [r.key, r]));
   const after = new Set(next.map((r) => r.key));
   const events = [];
   const base = config;
+  const on = (k) => base.notifyOn?.[k] !== false;
   for (const row of next) {
+    if (quiet.has(row.key)) continue;
     const old = before[row.key];
     config = profileFor(base, row.repo);
     const all = everything.has(row.key);
     const notifyLabels = new Set(config.labels.filter((l) => l.notify).map((l) => l.name));
     const lines = [];
     if (!old) {
-      lines.push('New in your list');
+      if (on('newPR')) lines.push('New in your list');
     } else {
       for (const name of row.allLabels) {
         if ((all || notifyLabels.has(name)) && !old.allLabels.includes(name)) lines.push(`Label: ${name}`);
@@ -579,12 +600,12 @@ export function diff(prev, next, config, everything = new Set(), states = {}) {
         const b = (row.extracted[ex.name] || []).join('\n');
         if (b && a !== b) lines.push(`${ex.name}: ${b}`);
       }
-      if (old.isDraft && !row.isDraft) lines.push('Marked ready for review');
+      if (old.isDraft && !row.isDraft && on('ready')) lines.push('Marked ready for review');
     }
     if (lines.length) events.push({ key: row.key, title: `${row.key} ${row.title}`, message: lines.join('\n'), url: row.url });
   }
   for (const old of prev) {
-    if (!after.has(old.key)) {
+    if (!after.has(old.key) && on('left') && !quiet.has(old.key)) {
       events.push({ key: old.key, title: `${old.key} ${old.title}`, message: LEFT_WORD[states[old.key]] || 'Left your list (merged or closed?)', url: old.url });
     }
   }
